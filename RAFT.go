@@ -24,28 +24,29 @@ const MIN_WAIT = 150
 const NUM_NODES = 8;
 
 //Listen and respond to the first canidate in a cycle
-func supportTheKing(i int, votes []chan int, haveAKing *bool, cycleTicker Ticker){
+func supportTheKing(support []chan int, petition chan int, haveAKing *bool){
 	var canidate int;
 	for {
 		select {
-		case canidate<-votes[i]:
+		case canidate = <-petition:
 			if (!(*haveAKing)){
 				support[canidate] <- 1;
-				*haveAKing = 1;
+				*haveAKing = true;
 			}
 		}
 	}
 }
 
 //propose yourself as king and listen for the response
-func doItYourself(i int, votes []chan int, haveAKing *bool, cycleTicker Ticker){
+func doItYourself(i int, support, petition []chan int, haveAKing *bool){
 	var votesGarnered int
+	cycleTicker := time.NewTicker(CYCLE_FREQUENCY * time.Millisecond);
 	for {
 		select {
 		case <-cycleTicker.C:
 			*haveAKing = false;
 			initiative := MIN_WAIT + (CYCLE_FREQUENCY - MIN_WAIT) * rand.Float64()
-			time.Sleep(initiative * time.Second)
+			time.Sleep(time.Duration(initiative) * time.Second)
 			if (!(*haveAKing)){
 				for j:=0; j<NUM_NODES; j++{
 					if (i!=j){
@@ -55,25 +56,23 @@ func doItYourself(i int, votes []chan int, haveAKing *bool, cycleTicker Ticker){
 				*haveAKing = true
 			}
 			votesGarnered = 0
-		}
-		case <- support[i]:
+		case <-support[i]:
 			votesGarnered += 1
 			if (votesGarnered > NUM_NODES/2 + 1){
-				//we are the king?
+				fmt.Println("I'm the king", i)
 			}
 		}
 	}
 }
 
 //Run the raft election algorithm
-func RAFT(i int, done chan bool, wg *sync.WaitGroup, petition []chan int, support []chan int){
+func RAFT(i int, done chan bool, wg *sync.WaitGroup, petition, support []chan int){
 	fmt.Println("start ", i);
 	haveAKing := false;
-	ticker := time.NewTicker(CYCLE_FREQUENCY * time.Millisecond);
-	go supportTheKing(i, votes, &haveAKing, ticker);
-	go doItYourself(i, votes, &haveAKing, ticker);
+	go supportTheKing(support, petition[i], &haveAKing);
+	go doItYourself(i, support, petition, &haveAKing);
 
-	//reset the king every cycle
+	//wait on shutdown
 	for {
 		select {
 		case <-done:
@@ -84,16 +83,20 @@ func RAFT(i int, done chan bool, wg *sync.WaitGroup, petition []chan int, suppor
 }
 
 func main() {
-	messages := make([]chan Skuttle, NUM_NODES); 
+	petition := make([]chan int, NUM_NODES); 
 	for i:=0; i<NUM_NODES; i++{
-		messages[i] = make(chan Skuttle);
+		petition[i] = make(chan int);
+	}
+	support := make([]chan int, NUM_NODES); 
+	for i:=0; i<NUM_NODES; i++{
+		support[i] = make(chan int);
 	}
 	
 	done := make(chan bool)
 	var wg sync.WaitGroup
 	wg.Add(NUM_NODES)
 	for i:=0; i<NUM_NODES; i++{
-		go RAFT(i, done, &wg, messages);
+		go RAFT(i, done, &wg, petition, support);
 	}
 
 	time.Sleep(RUN_TIME * time.Second)
